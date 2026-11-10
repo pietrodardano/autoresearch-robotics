@@ -1,0 +1,9 @@
+# Pinned task, environment, and robotics simulator dependencies
+# Used for task adapters, physics engines, and fixed benchmark data
+torch>=2.2.0
+numpy>=1.24.0
+scipy>=1.10.0
+# When adding simulator tasks (e.g. IsaacGym, Brax, Gymnasium, DM-Control), pin versions here:
+# gymnasium==1.0.0
+# mujoco==3.2.0
+

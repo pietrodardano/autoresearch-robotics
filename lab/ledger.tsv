@@ -1,0 +1,2 @@
+id	ts(YYYY-MM-DDTHH:MM)	tag	status	metric	metric_name	std	valid	secondary	parent	diff	constraints	desc
+000	2026-11-10T12:47	baseline	keep	0.006260	nmse	0.003160	1	params=90k;flops=1.8e+05;mem_mb=527.5;wall_s=0.11;state_dim=300;readout_features=301;mse=0.0003;mae=0.0136	000	f1+180-0	ok	initial

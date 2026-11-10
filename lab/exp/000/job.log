@@ -1,0 +1,2 @@
+Running scope as unit: run-rba50690549024a40860dda6b31a0697e.scope
+RESULT {"metric": 0.006259856047108769, "metric_name": "nmse", "std": 0.00316, "seeds": 3, "valid": 1, "invalid_reason": "", "constraints": {"status": "ok", "violated": []}, "secondary": {"params": 90901, "state_dim": 300, "readout_features": 301, "flops_sops": 182702.0, "mem_mb": 527.54, "wall_s": 0.1059, "raw_metric": 0.006259856047108769, "mse": 0.00032371161311554414, "mae": 0.013586370584865412}, "time_s": 0.4787}

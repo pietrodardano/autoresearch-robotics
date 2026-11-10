@@ -1,0 +1,146 @@
+# GOAL.md Template & Track Configuration Reference
+#
+# This file provides examples for each of the 6 research tracks supported by the harness:
+# 1. reservoir: Echo state networks / reservoir computing (frozen reservoir, closed-form readout)
+# 2. dl_supervised: Deep neural network learning (gradient-based optimization)
+# 3. world_model: Latent dynamics, prediction, and model-based rollout planning
+# 4. probabilistic: Bayesian learning, variational inference, Monte Carlo, and ensembles
+# 5. spiking: Neuromorphic & spiking networks (surrogate gradients OR local STDP rules)
+# 6. rl_policy: Reinforcement learning policy/value network optimization
+#
+# Copy one of the sections below to GOAL.md to activate that track.
+# The agent may NOT modify GOAL.md. Only the human operator selects track & caps.
+
+---
+# ==============================================================================
+# EXAMPLE 1: RESERVOIR COMPUTING TRACK
+# ==============================================================================
+goal: "Predict chaotic Mackey-Glass time series dynamics with minimum error and minimal parameter complexity."
+track: reservoir
+task: toy_mackey_glass
+learning_rule: closed_form             # Allowed: closed_form, ridge, convex
+seeds: [42, 43, 44]
+metric: nmse                           # Normalized Mean Squared Error
+metric_direction: min                  # 'min' (lower is better) or 'max'
+min_gain: 0.01                         # Minimum 1% improvement required over best
+noise_floor: 0.0001                    # Floor to reject noise fluctuations
+hard_timeout: 120                      # Hard timeout in seconds for evaluate.py
+frozen:
+  - reservoir_weights
+  - input_weights
+  - bias
+constraints:
+  max_params: 500000                   # Max total parameters
+  max_state_dim: 2000                  # Max reservoir internal state dimension
+  max_readout_features: 2000           # Max features projected to readout
+  max_flops_or_sops: 10000000.0        # Max FLOPs/SOPs per inference step
+  max_memory_mb: 4096.0                # Max peak memory in MB
+  max_wall_time_s: 60.0                # Max wall-clock time per seed in seconds
+
+---
+# ==============================================================================
+# EXAMPLE 2: DEEP LEARNING SUPERVISED TRACK
+# ==============================================================================
+# goal: "Robot end-effector trajectory and velocity tracking from proprioceptive sensors."
+# track: dl_supervised
+# task: robot_proprio_tracking
+# learning_rule: adamw                 # Allowed: gradient-based (adam, adamw, sgd)
+# seeds: [10, 20, 30]
+# metric: rmse
+# metric_direction: min
+# min_gain: 0.02
+# noise_floor: 0.0005
+# hard_timeout: 300
+# frozen: []
+# constraints:
+#   max_params: 5000000
+#   max_flops_or_sops: 50000000.0
+#   max_memory_mb: 8192.0
+#   max_wall_time_s: 180.0
+
+---
+# ==============================================================================
+# EXAMPLE 3: WORLD MODEL TRACK
+# ==============================================================================
+# goal: "Latent world model predicting future state transitions and multi-step rollouts."
+# track: world_model
+# task: robot_latent_dynamics
+# learning_rule: gradient             # Joint self-supervised and predictive loss
+# seeds: [1, 2, 3]
+# metric: rollout_error
+# metric_direction: min
+# min_gain: 0.015
+# noise_floor: 0.001
+# hard_timeout: 600
+# frozen: []
+# constraints:
+#   max_params: 10000000
+#   max_state_dim: 1024
+#   max_flops_or_sops: 100000000.0
+#   max_memory_mb: 16384.0
+#   max_wall_time_s: 300.0
+
+---
+# ==============================================================================
+# EXAMPLE 4: PROBABILISTIC / BAYESIAN LEARNING TRACK
+# ==============================================================================
+# goal: "Uncertainty-aware dynamics prediction using deep ensembles or variational inference."
+# track: probabilistic
+# task: tactile_slip_uncertainty
+# learning_rule: variational          # Allowed: variational, ensemble, mc_dropout
+# seeds: [101, 102, 103]
+# metric: expected_calibration_error
+# metric_direction: min
+# min_gain: 0.02
+# noise_floor: 0.0002
+# hard_timeout: 400
+# frozen: []
+# constraints:
+#   max_params: 8000000
+#   max_flops_or_sops: 80000000.0
+#   max_memory_mb: 12288.0
+#   max_wall_time_s: 200.0
+
+---
+# ==============================================================================
+# EXAMPLE 5: SPIKING / NEUROMORPHIC TRACK
+# ==============================================================================
+# goal: "Low-latency event-based tactile classification with spiking neural networks."
+# track: spiking
+# task: event_tactile_gesture
+# learning_rule: surrogate_gradient   # Declared rule: surrogate_gradient OR local_rule (never mixed)
+# seeds: [42, 43, 44]
+# metric: accuracy
+# metric_direction: max                # evaluate.py normalizes to lower-is-better for runner
+# min_gain: 0.01
+# noise_floor: 0.002
+# hard_timeout: 240
+# frozen: []
+# constraints:
+#   max_params: 1000000
+#   max_state_dim: 1000
+#   max_flops_or_sops: 5000000.0       # Measured in Synaptic Operations (SOPs)
+#   max_memory_mb: 4096.0
+#   max_wall_time_s: 120.0
+
+---
+# ==============================================================================
+# EXAMPLE 6: REINFORCEMENT LEARNING POLICY TRACK
+# ==============================================================================
+# goal: "Locomotion control policy learning under observation noise."
+# track: rl_policy
+# task: quadruped_trot_eval
+# learning_rule: on_policy            # Allowed: on_policy (e.g. PPO) or off_policy (e.g. SAC)
+# seeds: [7, 8, 9]
+# metric: episode_return
+# metric_direction: max                # evaluate.py negates return so runner compares lower-is-better
+# min_gain: 0.03
+# noise_floor: 0.05
+# hard_timeout: 600
+# frozen: []
+# constraints:
+#   max_params: 2000000
+#   max_flops_or_sops: 20000000.0
+#   max_memory_mb: 8192.0
+#   max_wall_time_s: 300.0
+

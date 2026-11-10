@@ -1,0 +1,212 @@
+"""
+Pipeline implementation adhering to the contract in section 3.
+Baseline model: Echo State Network (Reservoir Computing) with Ridge Regression readout.
+"""
+
+from __future__ import annotations
+from typing import Any, Dict, List, Optional
+import torch
+
+
+class ReservoirPipeline:
+    """
+    Echo State Network baseline for time-series forecasting.
+    Conforms to the reservoir track:
+    - Fixed frozen recurrent reservoir and input projections.
+    - Closed-form ridge regression readout.
+    """
+    def __init__(self, cfg: Dict[str, Any]):
+        self.cfg = cfg
+        self.seed = int(cfg.get("seed", 42))
+        self.state_dim = int(cfg.get("state_dim", 300))
+        self.spectral_radius = float(cfg.get("spectral_radius", 0.95))
+        self.leak_rate = float(cfg.get("leak_rate", 0.8))
+        self.density = float(cfg.get("density", 0.15))
+        self.ridge_lambda = float(cfg.get("ridge_lambda", 1e-5))
+        self.washout = int(cfg.get("washout", 50))
+        self.input_dim = int(cfg.get("input_dim", 1))
+        self.output_dim = int(cfg.get("output_dim", 1))
+
+        # Generator for reproducible reservoir initialization
+        gen = torch.Generator().manual_seed(self.seed)
+
+        # Frozen input weights: shape (state_dim, input_dim)
+        w_in = (torch.rand(self.state_dim, self.input_dim, generator=gen) - 0.5) * 0.5
+        self.W_in = w_in.detach().clone()
+        self.W_in.requires_grad = False
+
+        # Frozen recurrent weights: shape (state_dim, state_dim)
+        w_res = torch.randn(self.state_dim, self.state_dim, generator=gen)
+        mask = torch.rand(self.state_dim, self.state_dim, generator=gen) < self.density
+        w_res = w_res * mask.float()
+        
+        # Scale to desired spectral radius
+        eigvals = torch.linalg.eigvals(w_res)
+        max_eig = torch.max(torch.abs(eigvals))
+        if max_eig > 0:
+            w_res = (w_res / max_eig) * self.spectral_radius
+        self.W_res = w_res.detach().clone()
+        self.W_res.requires_grad = False
+
+        # Frozen bias
+        b_res = (torch.rand(self.state_dim, generator=gen) - 0.5) * 0.05
+        self.b_res = b_res.detach().clone()
+        self.b_res.requires_grad = False
+
+        # Readout weights (trained via ridge regression in fit())
+        # Includes bias term (+1 feature)
+        readout_w = torch.zeros(self.output_dim, self.state_dim + 1)
+        self.W_out = torch.nn.Parameter(readout_w, requires_grad=True)
+        # Tag parameter as readout for track guards
+        self.W_out._is_readout = True
+        self.W_out._name = "W_out"
+
+        # Internal state
+        self.x = torch.zeros(self.state_dim)
+
+        # Normalization statistics computed ONLY during fit()
+        self.u_mean = torch.tensor(0.0)
+        self.u_std = torch.tensor(1.0)
+        self.y_mean = torch.tensor(0.0)
+        self.y_std = torch.tensor(1.0)
+
+    def frozen_tensors(self) -> List[torch.Tensor]:
+        """Tensors that must remain strictly frozen and unmodified."""
+        return [self.W_in, self.W_res, self.b_res]
+
+    def trainable_parameters(self) -> List[torch.nn.Parameter]:
+        """Parameters optimized during fit(). Must only be readout for reservoir track."""
+        return [self.W_out]
+
+    def stats(self) -> Dict[str, Any]:
+        """Returns architectural parameters and feature dimensions."""
+        total_params = (
+            self.W_in.numel()
+            + self.W_res.numel()
+            + self.b_res.numel()
+            + self.W_out.numel()
+        )
+        return {
+            "params": int(total_params),
+            "state_dim": int(self.state_dim),
+            "readout_features": int(self.state_dim + 1),
+            "spectral_radius": float(self.spectral_radius),
+            "leak_rate": float(self.leak_rate),
+        }
+
+    def _drive_states(self, u_norm: torch.Tensor, initial_state: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Drives the recurrent reservoir states given an input sequence."""
+        T = u_norm.shape[0]
+        states = torch.zeros(T, self.state_dim, dtype=torch.float32)
+        x = initial_state.clone() if initial_state is not None else torch.zeros(self.state_dim)
+        
+        w_in = self.W_in
+        w_res = self.W_res
+        b_res = self.b_res
+        alpha = self.leak_rate
+
+        for t in range(T):
+            u_t = u_norm[t]
+            in_term = w_in @ u_t if u_t.dim() >= 1 else w_in.squeeze(1) * u_t
+            pre = in_term + w_res @ x + b_res
+            x = (1.0 - alpha) * x + alpha * torch.tanh(pre)
+            states[t] = x
+
+        self.x = x.detach().clone()
+        return states
+
+    def fit(self, train: Any) -> None:
+        """
+        Fits the pipeline using training data only.
+        Normalizes data, collects reservoir states, and computes closed-form ridge readout.
+        """
+        u_raw = train.inputs.float()
+        y_raw = train.targets.float()
+
+        # Fit normalization ONLY on training set
+        self.u_mean = u_raw.mean(dim=0, keepdim=True)
+        self.u_std = u_raw.std(dim=0, keepdim=True) + 1e-7
+        self.y_mean = y_raw.mean(dim=0, keepdim=True)
+        self.y_std = y_raw.std(dim=0, keepdim=True) + 1e-7
+
+        u_norm = (u_raw - self.u_mean) / self.u_std
+        y_norm = (y_raw - self.y_mean) / self.y_std
+
+        # Drive reservoir
+        states = self._drive_states(u_norm)
+
+        # Discard initial transient washout steps
+        T = states.shape[0]
+        wash = min(self.washout, T // 4)
+        active_states = states[wash:]
+        active_y = y_norm[wash:]
+
+        # Append bias column to state matrix: X shape (T - wash, state_dim + 1)
+        ones = torch.ones(active_states.shape[0], 1, dtype=torch.float32)
+        X = torch.cat([active_states, ones], dim=1)
+        Y = active_y
+
+        # Closed-form Ridge Regression: W_out = (X^T X + lambda I)^(-1) X^T Y
+        D = X.shape[1]
+        reg = self.ridge_lambda * torch.eye(D, dtype=torch.float32)
+        xtx = X.T @ X + reg
+        xty = X.T @ Y
+        solved = torch.linalg.solve(xtx, xty) # shape (D, output_dim)
+        
+        # Store in W_out parameter: shape (output_dim, D)
+        with torch.no_grad():
+            self.W_out.copy_(solved.T)
+
+    def predict(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Generates predictions for inputs.
+        Receives only inputs, never targets.
+        """
+        u_raw = inputs.float()
+        u_norm = (u_raw - self.u_mean) / self.u_std
+
+        # Drive states starting from last fitted state (or zeros if fresh)
+        init_state = self.x if hasattr(self, "x") and self.x is not None else torch.zeros(self.state_dim)
+        states = self._drive_states(u_norm, initial_state=init_state)
+        
+        ones = torch.ones(states.shape[0], 1, dtype=torch.float32)
+        X = torch.cat([states, ones], dim=1)
+
+        # Predict normalized targets: Y_norm = X @ W_out^T
+        pred_norm = X @ self.W_out.data.T
+        pred = pred_norm * self.y_std + self.y_mean
+        return pred
+
+    def rollout(self, initial: torch.Tensor, actions: Optional[torch.Tensor] = None, horizon: int = 50) -> torch.Tensor:
+        """
+        Autoregressive multi-step rollout for world-model / control evaluation.
+        """
+        preds = []
+        curr_u = initial.float()
+        x = torch.zeros(self.state_dim)
+
+        alpha = self.leak_rate
+        w_in = self.W_in
+        w_res = self.W_res
+        b_res = self.b_res
+        w_out = self.W_out.data
+
+        for _ in range(horizon):
+            u_norm = (curr_u - self.u_mean) / self.u_std
+            u_t = u_norm.squeeze()
+            in_term = w_in @ u_t if u_t.dim() >= 1 else w_in.squeeze(1) * u_t
+            pre = in_term + w_res @ x + b_res
+            x = (1.0 - alpha) * x + alpha * torch.tanh(pre)
+            
+            feat = torch.cat([x, torch.ones(1)], dim=0).unsqueeze(0)
+            pred_norm = feat @ w_out.T
+            pred = pred_norm * self.y_std + self.y_mean
+            preds.append(pred)
+            curr_u = pred
+
+        return torch.cat(preds, dim=0)
+
+
+def build(cfg: Dict[str, Any]) -> ReservoirPipeline:
+    """Builds and returns a Pipeline conforming to the contract."""
+    return ReservoirPipeline(cfg)

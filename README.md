@@ -1,92 +1,192 @@
-# autoresearch
+# Autoresearch Robotics
 
-![teaser](progress.png)
+An autonomous, self-contained research harness for robotics, dynamical systems, and machine learning.
+Designed to be **pulled into real robotics projects as a read-only evaluation and experimentation scaffold**.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+This harness adapts Karpathy's `autoresearch` methodology for physical systems and neural architectures across 6 research paradigms:
+- **Reservoir Computing** (Echo State Networks, liquid state machines, convex closed-form readouts)
+- **Deep Learning** (Supervised end-effector tracking, self-supervised representation, policy learning)
+- **World Models** (Latent dynamics, multi-step transition prediction, planning rollouts)
+- **Probabilistic Learning** (Bayesian models, deep ensembles, variational inference, uncertainty calibration)
+- **Neuromorphic / Spiking Networks** (Surrogate gradients or local STDP learning rules)
+- **Reinforcement Learning** (Continuous control, policy/value networks)
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+---
 
-## How it works
+## Harness Design & Project Integration
 
-The repo is deliberately kept small and only really has three files that matter:
+This repository is designed as a **read-only autonomous harness** that downstream robotics projects pull in. 
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+```
+Real Project Root /
+├── GOAL.md                  Declared track, metric, and hardware constraints (human-locked)
+├── protected/               The evaluation harness (read-only for agents; SHA-256 verified)
+│   ├── evaluate.py          Only entry point: runs multi-seed evaluation, emits RESULT line
+│   ├── guards.py            Enforces frozen components, track compliance, and prevents data leakage
+│   ├── budget.py            Accounts for parameters, state dim, FLOPs/SOPs, memory, and wall time
+│   ├── tasks/               Task adapters (simulators, robot dataset splits, closed-loop rollout)
+│   └── data/                Fixed train and validation splits (test split held separately)
+├── src/                     Active codebase that autonomous coding agents may modify
+│   ├── pipeline.py          Mandatory interface contract (fit, predict, rollout, stats)
+│   └── ...                  Encoders, models, losses, and learning rules
+├── lab/                     Supervisory scripts and persistent memory (no version control)
+│   ├── run.sh               Detached runner (start, wait, status, brief, show)
+│   ├── loop.sh              Outer loop supervisor managing fresh agent sessions
+│   ├── program.md           Agent instructions (short prompt for coding LLMs)
+│   ├── ledger.tsv           Append-only experiment record
+│   ├── best/                Current best src/ snapshot and locked metric
+│   ├── exp/<id>/            Per-experiment logs, diff patches, src snapshot, and result JSON
+│   ├── protected.sha256     Integrity manifest of protected/
+│   └── protected_backup/    Trusted backup for automatic tamper recovery
+└── tests/                   Validation suite ensuring harness invariants hold
+```
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+### How Real Projects Pull in this Harness
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+1. **Pull as Subproject or Template**:
+   Clone or vendor this harness into your robotics repository.
+2. **Define the Project Objective (`GOAL.md`)**:
+   Select your track (`reservoir`, `dl_supervised`, `world_model`, `probabilistic`, `spiking`, or `rl_policy`) using `GOAL.md.template` as a reference. Lock your evaluation metric (e.g., trajectory tracking RMSE, slip detection calibration, contact force error).
+3. **Connect Your Robot Task (`protected/tasks/`)**:
+   Implement a task adapter in `protected/tasks/<your_robot_task>.py` that interfaces with your robot dataset or physics simulator (Isaac Gym, MuJoCo, Brax, etc.).
+4. **Hold Out the Test Split**:
+   Keep the final test split stored outside the repository (e.g. `~/private/<project>/test/`) with restricted permissions (`chmod 600`). It remains invisible to agents until human verification with `HARNESS_FINAL=1`.
+5. **Establish the Baseline in `src/`**:
+   Provide your initial baseline model in `src/pipeline.py` implementing the pipeline contract.
+6. **Deploy the Agent**:
+   Point your coding agent (Claude Code, Gemini, OpenAI, etc.) to `lab/program.md` or launch the unattended outer loop via `./lab/loop.sh`. Agents will autonomously iterate, test hypotheses, and log results without ever interacting with version control.
 
-## Quick start
+---
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+## Quickstart
+
+### 1. Requirements
+Ensure Python 3.10+ and PyTorch (with CUDA 12.8+ if running on GPU) are installed:
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Run a Single Experiment
+Start an experiment in the background (detached under `setsid nohup`):
+```bash
+./lab/run.sh start baseline "Initial reservoir baseline"
+```
+
+Check runner status:
+```bash
+./lab/run.sh status
+```
+
+Wait for the run to complete and apply keep/discard decisions:
+```bash
+./lab/run.sh wait
+```
+
+View the experiment summary brief (bounded strictly to 1,500 characters):
+```bash
+./lab/run.sh brief
+```
+
+Inspect a specific experiment and its code diff:
+```bash
+./lab/run.sh show 000
+```
+
+---
+
+## Autonomous Outer Loop
+
+### How to Run
+The outer loop runs continuous, stateless agent sessions. Every third session runs in `exploit` mode (targeted parameter/code tuning); other sessions run in `explore` mode (architectural/structural hypothesis testing).
+
+1. Set your agent invocation command:
+```bash
+export AGENT_CMD="my-agent-cli --program lab/program.md"
+# Optionally differentiate ideator and exploit models:
+export AGENT_IDEATOR="claude-3-7-sonnet --program lab/program.md"
+export AGENT_CMD_EXPLOIT="claude-3-5-haiku --program lab/program.md"
+```
+
+2. Launch in a persistent terminal session (`tmux` or `nohup`):
+```bash
+tmux new -s research
+./lab/loop.sh
+```
+
+### How to Stop
+To terminate the research loop gracefully after the current session completes:
+```bash
+touch lab/STOP
+```
+The loop will detect `lab/STOP`, log the exit, and cleanly terminate.
+
+---
+
+## Adding a New Task
+
+To introduce a new benchmark task (e.g. `robot_arm_reach`):
+
+1. **Create Adapter**:
+   Add `protected/tasks/robot_arm_reach.py` implementing:
+   - `load_train() -> TaskData`
+   - `load_val() -> TaskData`
+   - `load_test() -> TaskData` (enforcing `HARNESS_FINAL=1` check)
+   - `validation_inputs(val_data)` and `validation_targets(val_data)`
+   - `metric_fns: Dict[str, Callable]`
+   - `rollout_eval(pipeline)` (if task includes closed-loop simulation)
+   - `leakage_check(train_data, val_data, pipeline)`
+
+2. **Add Data**:
+   - Store train/val data under `protected/data/robot_arm_reach/`.
+   - Store private test split under `~/private/<project>/test/robot_arm_reach/test.pt` (`chmod 600`).
+
+3. **Update Hash Manifest & Backup**:
+   Whenever `protected/` is modified by the human operator, refresh the manifest and backup:
+   ```bash
+   find protected/ -type f ! -path '*/__pycache__*' | sort | xargs sha256sum > lab/protected.sha256
+   rsync -a --delete --exclude='__pycache__' protected/ lab/protected_backup/
+   ```
+
+4. **Update `GOAL.md`**:
+   Set `task: robot_arm_reach` and define the appropriate metric and caps.
+
+---
+
+## Adding a New Track
+
+To define a new paradigm (e.g. `quantum_reservoir`):
+
+1. Edit `protected/guards.py` in `check_track_compliance(pipeline, track, learning_rule)` to add the verification rules for the new track.
+2. Define which parameters must remain frozen and which learning rules are permitted.
+3. Update `lab/protected.sha256` and `lab/protected_backup/` as shown above.
+4. Add an example configuration to `GOAL.md.template`.
+
+---
+
+## Running Final Test Evaluation by Hand
+
+The test split is locked against the agent process. Only the human operator can evaluate the best model on the holdout test split:
 
 ```bash
+HARNESS_FINAL=1 python -c "
+from protected.tasks.toy_mackey_glass import load_test, validation_inputs, validation_targets, metric_fns
+import src.pipeline as p
 
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+pipe = p.build({'seed': 42})
+test_data = load_test()
+inputs = validation_inputs(test_data)
+targets = validation_targets(test_data)
+preds = pipe.predict(inputs)
+nmse = metric_fns['nmse'](targets, preds)
+print(f'Final Test Split NMSE: {nmse:.6f}')
+"
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+---
 
-## Running the agent
+## Running the Harness Test Suite
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
-
+Run all 12 invariant tests:
+```bash
+pytest -v tests/
 ```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
-```
-
-The `program.md` file is essentially a super lightweight "skill".
-
-## Project structure
-
-```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
-```
-
-## Design choices
-
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
-
-## Platform support
-
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
-
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
-
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
-
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
-
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
-
-## License
-
-MIT
